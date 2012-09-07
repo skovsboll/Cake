@@ -15,7 +15,7 @@ Based on file extensions, Cake will know what to do in version 0.1:
 
 * .cs files are compiled as C#
 * .resx files are embedded as resources
-* app.<x>.config files are transformed at build, and all x's are treated as build configurations
+* app.**x**.config files are transformed at build, and all **x**'s are treated as build configurations
 * assemblies in the /lib folder are added as references
 * /bin is cleaned before each build
 
