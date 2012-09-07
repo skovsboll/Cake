@@ -52,8 +52,10 @@ namespace Cake {
 				_root.CreateSubdirectory(subfolderName);
 		}
 
-		public void Run()
+		public void Run(string configName)
 		{
+			_activeConfigurationName = configName;
+
 			EnsureSrcAndLibExists();
 			GatherSourceFiles();
 			GatherResourceFiles();
@@ -138,11 +140,20 @@ namespace Cake {
 		{
 			foreach (var group in _configurationGroups)
 			{
-				ConfigurationGroup.Configuration targetConfiguration = @group.Configurations.First();
-				var task = new TransformationTask(group.BaseFile.FullName, targetConfiguration.File.FullName);
+				ConfigurationGroup.Configuration targetConfiguration = @group.Configurations.FirstOrDefault(c => string.Compare(c.Name, _activeConfigurationName, StringComparison.CurrentCultureIgnoreCase) == 0);
 
-				if (!task.Execute(Path.ChangeExtension(Path.Combine(_bin.FullName, _root.Name), ".exe.config"), false))
-					throw new CakeException("Transformations failed: " + targetConfiguration.Name);
+				string destinationFilePath = Path.ChangeExtension(Path.Combine(_bin.FullName, _root.Name), ".exe.config");
+				if (targetConfiguration != null)
+				{
+					var task = new TransformationTask(group.BaseFile.FullName, targetConfiguration.File.FullName);
+
+					if (!task.Execute(destinationFilePath, false))
+						throw new CakeException("Transformations failed: " + targetConfiguration.Name);					
+				}
+				else
+				{
+					group.BaseFile.CopyTo(destinationFilePath);
+				}
 			}
 		}
 
@@ -176,6 +187,9 @@ namespace Cake {
 			if (string.Compare(_activeConfigurationName, "debug", StringComparison.CurrentCultureIgnoreCase) == 0)
 			{
 				arguments.Add("/debug");
+				arguments.Add("/define:DEBUG");
+				arguments.Add("/define:TRACE");
+				arguments.Add("/define:CONTRACTS_FULL");
 				arguments.Add("/pdb:\""+ Path.Combine(_bin.FullName, _root.Name) +".pdb\"");
 			}
 			else
@@ -241,7 +255,8 @@ namespace Cake {
 		public static void Main(string[] args) {
 			try
 			{
-				new Cake(Path.GetFullPath(".")).Run();
+				new Cake(Path.GetFullPath(".")).Run(args.Take(1).DefaultIfEmpty("DEBUG").First());		
+
 				Console.WriteLine("Done!");
 			}
 			catch (CakeException exception)
