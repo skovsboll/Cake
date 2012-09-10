@@ -47,9 +47,11 @@
     <SlowCheetahTargets Condition=" '$(SlowCheetahTargets)'=='' ">$(LOCALAPPDATA)\Microsoft\MSBuild\SlowCheetah\v1\SlowCheetah.Transforms.targets</SlowCheetahTargets>
   </PropertyGroup>
   <ItemGroup>
+    <Reference Include="dotless.Core">
+      <HintPath>packages\dotless.1.3.0.5\lib\dotless.Core.dll</HintPath>
+    </Reference>
     <Reference Include="Microsoft.Build.Framework" />
     <Reference Include="Microsoft.Build.Utilities.v4.0" />
-    <Reference Include="Microsoft.Synchronization, Version=2.1.0.0, Culture=neutral, PublicKeyToken=89845dcd8080cc91, processorArchitecture=MSIL" />
     <Reference Include="Microsoft.Web.Publishing.Tasks">
       <HintPath>..\lib\Microsoft.Web.Publishing.Tasks.Dll</HintPath>
     </Reference>
@@ -90,6 +92,7 @@
       <IsTransformFile>True</IsTransformFile>
     </None>
     <None Include="Cake.snk" />
+    <None Include="packages.config" />
     <None Include="Transformations\ParametersSchema.xsd">
       <SubType>Designer</SubType>
     </None>

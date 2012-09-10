@@ -8,10 +8,12 @@ using ConfigTransformationTool.Base;
 
 namespace Cake {
 	public class Cake {
+		
 		private readonly DirectoryInfo _root;
 		private DirectoryInfo _bin;
 		private DirectoryInfo _src;
 		private DirectoryInfo _lib;
+
 		private string _activeConfigurationName = "Debug";
 
 		private List<ConfigurationGroup> _configurationGroups;
@@ -20,6 +22,7 @@ namespace Cake {
 		private readonly Dictionary<string, FileInfo[]> _sources = new Dictionary<string, FileInfo[]>();
 		private readonly Dictionary<string, FileInfo[]> _resources = new Dictionary<string, FileInfo[]>();
 		private readonly List<FileInfo> _content = new List<FileInfo>();
+
 		private readonly List<FileInfo> _references = new List<FileInfo>();
 
 		public Cake(string folder) {
@@ -57,12 +60,20 @@ namespace Cake {
 			_activeConfigurationName = configName;
 
 			EnsureSrcAndLibExists();
-			GatherSourceFiles();
-			GatherResourceFiles();
-			GatherReferences();
-			GatherContentFiles();
+
+			FindAndCakeSubProjects(_src);
+
+			SortFiles(GatherFiles(_src));
+
+			//GatherSourceFiles();
+			//GatherResourceFiles();
+			//GatherReferences();
+			//GatherContentFiles();
+
 			CleanOutput();
+	
 			EnumerateConfigurations();
+			
 			CompileCs();
 			TransformConfigs();
 			CopyContent();
@@ -74,19 +85,32 @@ namespace Cake {
 			//MergeIl();
 
 			// TODO  Support sub-projects
+		}
 
-			try
+		private void SortFiles(IEnumerable<FileInfo> files)
+		{
+			
+
+		}
+
+		private void FindAndCakeSubProjects(DirectoryInfo folder)
+		{
+			if (string.Equals(folder.Name, "src", StringComparison.CurrentCultureIgnoreCase))
 			{
-				var x = new Microsoft.Synchronization.SyncOrchestrator();
-				x.Synchronize();
-
+				new Cake(folder.FullName).Run(_activeConfigurationName);
 			}
-			catch (Exception)
+			else
 			{
+				folder.EnumerateDirectories("src").Each(FindAndCakeSubProjects);
 			}
 		}
 
+		private IEnumerable<FileInfo> GatherFiles(DirectoryInfo folder)
+		{
+			if (string.Equals(folder.Name, "src", StringComparison.InvariantCultureIgnoreCase)) return new FileInfo[0];
 
+			return folder.EnumerateFiles().Union(folder.EnumerateDirectories().SelectMany(GatherFiles));
+		}
 
 		private void EnumerateConfigurations()
 		{
@@ -117,6 +141,7 @@ namespace Cake {
 					select f;
 
 				BaseFile = shortestFirst.First();
+
 				Configurations =
 					from f in shortestFirst.Skip(1)
 					select new Configuration(f);
@@ -258,6 +283,7 @@ namespace Cake {
 				new Cake(Path.GetFullPath(".")).Run(args.Take(1).DefaultIfEmpty("DEBUG").First());		
 
 				Console.WriteLine("Done!");
+
 			}
 			catch (CakeException exception)
 			{
