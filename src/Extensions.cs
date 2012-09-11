@@ -14,6 +14,23 @@ namespace Cake
 			 }
 		 }
 
+		public static IEnumerable<T> Pick<T>(this ICollection<T> items, Func<T, bool> predicate)
+		{
+			var matches = items.Where(predicate).ToArray();
+			matches.Each(i => items.Remove(i));
+			return matches;
+		}
+
+		public static T PickFirstOrDefault<T>(this ICollection<T> items, Func<T, bool> predicate)
+		{
+			var match = items.FirstOrDefault(predicate);
+			if (match != null)
+			{
+				items.Remove(match);
+			}
+			return match;
+		}
+
 		public static void AddRange<T>(this ICollection<T> collection, IEnumerable<T> newItems  )
 		{
 			newItems.Each(collection.Add);

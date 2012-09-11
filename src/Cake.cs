@@ -4,11 +4,16 @@ using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Reflection;
+using System.Text.RegularExpressions;
 using ConfigTransformationTool.Base;
+using dotless.Core.Loggers;
+using dotless.Core.Parser;
 
-namespace Cake {
-	public class Cake {
-		
+namespace Cake
+{
+	public class Cake
+	{
+
 		private readonly DirectoryInfo _root;
 		private DirectoryInfo _bin;
 		private DirectoryInfo _src;
@@ -17,15 +22,14 @@ namespace Cake {
 		private string _activeConfigurationName = "Debug";
 
 		private List<ConfigurationGroup> _configurationGroups;
-		private List<string> _configurations; 
+		private List<string> _configurations;
 
-		private readonly Dictionary<string, FileInfo[]> _sources = new Dictionary<string, FileInfo[]>();
-		private readonly Dictionary<string, FileInfo[]> _resources = new Dictionary<string, FileInfo[]>();
-		private readonly List<FileInfo> _content = new List<FileInfo>();
+		private List<FileInfo> _sources = new List<FileInfo>();
 
 		private readonly List<FileInfo> _references = new List<FileInfo>();
 
-		public Cake(string folder) {
+		public Cake(string folder)
+		{
 			_root = FindNearestRoot(new DirectoryInfo(folder));
 		}
 
@@ -40,18 +44,20 @@ namespace Cake {
 			return FindNearestRoot(folder.Parent);
 		}
 
-		private void EnsureSrcAndLibExists() {
+		private void EnsureSrcAndLibExists()
+		{
 			EnsureSubFolderExists("src");
 			EnsureSubFolderExists("lib");
 			EnsureSubFolderExists("bin");
 
-			_bin = _root.GetDirectories("bin").First();
-			_src = _root.GetDirectories("src").First();
-			_lib = _root.GetDirectories("lib").First();
+			_bin = _root.GetDirectories("bin", SearchOption.TopDirectoryOnly).First();
+			_src = _root.GetDirectories("src", SearchOption.TopDirectoryOnly).First();
+			_lib = _root.GetDirectories("lib", SearchOption.TopDirectoryOnly).First();
 		}
 
-		private void EnsureSubFolderExists(string subfolderName) {
-			if (!_root.EnumerateDirectories(subfolderName).Any())
+		private void EnsureSubFolderExists(string subfolderName)
+		{
+			if (!_root.EnumerateDirectories(subfolderName, SearchOption.TopDirectoryOnly).Any())
 				_root.CreateSubdirectory(subfolderName);
 		}
 
@@ -61,20 +67,22 @@ namespace Cake {
 
 			EnsureSrcAndLibExists();
 
-			FindAndCakeSubProjects(_src);
+			_src.EnumerateDirectories().Each(FindAndCakeSubProjects);
 
-			SortFiles(GatherFiles(_src));
+			_sources = GatherSources(_src).ToList();
 
 			//GatherSourceFiles();
 			//GatherResourceFiles();
-			//GatherReferences();
+			GatherReferences();
 			//GatherContentFiles();
 
 			CleanOutput();
-	
+
 			EnumerateConfigurations();
-			
+
 			CompileCs();
+			CompileLess();
+
 			TransformConfigs();
 			CopyContent();
 
@@ -84,13 +92,24 @@ namespace Cake {
 			//RunBooc();
 			//MergeIl();
 
-			// TODO  Support sub-projects
+			//GatherDeploymentTargets();
+			//Deploy();
+			//		* Tag version in SC if deployed
 		}
 
-		private void SortFiles(IEnumerable<FileInfo> files)
+		private void CompileLess()
 		{
-			
+			var lessFiles = _sources.Pick(f => f.Name.EndsWith(".less")).ToArray();
 
+			if (!lessFiles.Any()) return;
+
+			var lessEngine = new dotless.Core.LessEngine(new Parser(), new DiagnosticsLogger(LogLevel.Info), true, false);
+
+			foreach (var lessFile in lessFiles)
+			{
+				string cssSource = File.ReadAllText(lessFile.FullName);
+				_sources.Add(new FileInfo(lessEngine.TransformToCss(lessFile.FullName, Path.ChangeExtension(lessFile.FullName, ".css"))));
+			}
 		}
 
 		private void FindAndCakeSubProjects(DirectoryInfo folder)
@@ -105,11 +124,15 @@ namespace Cake {
 			}
 		}
 
-		private IEnumerable<FileInfo> GatherFiles(DirectoryInfo folder)
+		private static Regex _ignore = new Regex(@"^bin$|^obj$|^src$|^_Resharper.*|packages|ncrunch|solution", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+		private IEnumerable<FileInfo> GatherSources(DirectoryInfo folder)
 		{
-			if (string.Equals(folder.Name, "src", StringComparison.InvariantCultureIgnoreCase)) return new FileInfo[0];
-
-			return folder.EnumerateFiles().Union(folder.EnumerateDirectories().SelectMany(GatherFiles));
+			return 
+				folder.EnumerateFiles()
+				.Where(f => !_ignore.IsMatch(f.Name))
+				.Union(folder.EnumerateDirectories()
+				.Where(d => !_ignore.IsMatch(d.Name))
+				.SelectMany(GatherSources));
 		}
 
 		private void EnumerateConfigurations()
@@ -119,8 +142,8 @@ namespace Cake {
 				 let parts = c.Name.Split('.')
 				 let first = parts.First()
 				 group c by first
-				 into g
-				 select new ConfigurationGroup(g)).ToList();
+					 into g
+					 select new ConfigurationGroup(g)).ToList();
 
 			_configurations = _configurationGroups.SelectMany(g => g.Configurations).Select(c => c.Name).Distinct().ToList();
 
@@ -135,7 +158,7 @@ namespace Cake {
 
 			public ConfigurationGroup(IEnumerable<FileInfo> fileInfos)
 			{
-				var shortestFirst = 
+				var shortestFirst =
 					from f in fileInfos
 					orderby f.Name.Length
 					select f;
@@ -167,24 +190,27 @@ namespace Cake {
 			{
 				ConfigurationGroup.Configuration targetConfiguration = @group.Configurations.FirstOrDefault(c => string.Compare(c.Name, _activeConfigurationName, StringComparison.CurrentCultureIgnoreCase) == 0);
 
-				string destinationFilePath = Path.ChangeExtension(Path.Combine(_bin.FullName, _root.Name), ".exe.config");
+				string destinationFilePath = group.BaseFile.Name.StartsWith("app.") ? Path.ChangeExtension(Path.Combine(_bin.FullName, _root.Name), ".exe.config") : Path.Combine(_bin.FullName, group.BaseFile.Name);
 				if (targetConfiguration != null)
 				{
 					var task = new TransformationTask(group.BaseFile.FullName, targetConfiguration.File.FullName);
 
 					if (!task.Execute(destinationFilePath, false))
-						throw new CakeException("Transformations failed: " + targetConfiguration.Name);					
+						throw new CakeException("Transformations failed: " + targetConfiguration.Name);
 				}
 				else
 				{
 					group.BaseFile.CopyTo(destinationFilePath);
 				}
+
+				_sources.Remove(group.BaseFile);
+				group.Configurations.Each(c => _sources.Remove(c.File));
 			}
 		}
 
 		private void CopyContent()
 		{
-			foreach (var file in _content)
+			foreach (var file in _sources)
 			{
 				file.CopyTo(Path.Combine(_bin.FullName, file.Name));
 			}
@@ -197,11 +223,12 @@ namespace Cake {
 		}
 
 
-		private void CompileCs() {
-			FileInfo keyFile = _src.EnumerateFiles("*.snk").FirstOrDefault();
+		private void CompileCs()
+		{
+			FileInfo keyFile = _sources.PickFirstOrDefault(f => f.Name.EndsWith(".snk"));
 
-			string csFiles = string.Join(" ", _sources["*.cs"].Select(fi => "\"" + fi.FullName + "\"").ToArray());
-			string resources = string.Join(" ", _resources.Values.SelectMany(fi => fi).Select(fi => "/resource:\"" + fi.FullName + "\"").ToArray());
+			string csFiles = string.Join(" ", _sources.Pick(f => f.Name.EndsWith(".cs")).Select(fi => "\"" + fi.FullName + "\"").ToArray());
+			string resources = string.Join(" ", _sources.Pick(f => f.Name.EndsWith(".resx")).Select(fi => "/resource:\"" + fi.FullName + "\"").ToArray());
 			string output = "/out:\"" + _bin.FullName + "\\" + _root.Name + ".exe\"";
 			string target = "/target:exe";
 			string lib = "/lib:\"" + _lib.FullName + "\"";
@@ -215,7 +242,7 @@ namespace Cake {
 				arguments.Add("/define:DEBUG");
 				arguments.Add("/define:TRACE");
 				arguments.Add("/define:CONTRACTS_FULL");
-				arguments.Add("/pdb:\""+ Path.Combine(_bin.FullName, _root.Name) +".pdb\"");
+				arguments.Add("/pdb:\"" + Path.Combine(_bin.FullName, _root.Name) + ".pdb\"");
 			}
 			else
 			{
@@ -234,7 +261,8 @@ namespace Cake {
 			Process.Start(startInfo).WaitForExit();
 		}
 
-		private void GatherReferences() {
+		private void GatherReferences()
+		{
 			_references.AddRange(_lib.GetFiles("*.dll", SearchOption.AllDirectories));
 			_references.AddRange(_lib.GetFiles("*.lnk", SearchOption.AllDirectories).Select(DeferenceLink));
 
@@ -246,41 +274,24 @@ namespace Cake {
 					.Select(a => Assembly.ReflectionOnlyLoad(a).Location)
 					.Select(p => new FileInfo(p)));
 			}
+
+			_references.AddRange(_src.GetDirectories("packages").SelectMany(f => f.GetFiles("*.dll", SearchOption.AllDirectories)));
+
 		}
 
-		private void GatherSourceFiles() {
-			string[] extensions = new[] { "*.cs", "*.resx" };
-
-			foreach (string extension in extensions)
-				_sources.Add(extension, _src.GetFiles(extension, SearchOption.AllDirectories));
-		}
-
-		private void GatherResourceFiles()
+		private FileInfo DeferenceLink(FileInfo lnkFile)
 		{
-			string[] extensions = new[] { "*.xsd", "*.resx" };
-
-			foreach (string extension in extensions)
-				_resources.Add(extension, _src.GetFiles(extension, SearchOption.AllDirectories));
-		}
-
-		private void GatherContentFiles()
-		{
-			string[] extensions = new[] { "*.html" };
-
-			foreach (var file in extensions.SelectMany(ext => _src.GetFiles(ext, SearchOption.AllDirectories)))
-				_content.Add(file);
-		}
-
-		private FileInfo DeferenceLink(FileInfo lnkFile) {
-			using(var link = new ShellLink(lnkFile.FullName)) {
+			using (var link = new ShellLink(lnkFile.FullName))
+			{
 				return new FileInfo(link.Target);
 			}
 		}
 
-		public static void Main(string[] args) {
+		public static void Main(string[] args)
+		{
 			try
 			{
-				new Cake(Path.GetFullPath(".")).Run(args.Take(1).DefaultIfEmpty("DEBUG").First());		
+				new Cake(Path.GetFullPath(".")).Run(args.Take(1).DefaultIfEmpty("DEBUG").First());
 
 				Console.WriteLine("Done!");
 
@@ -295,7 +306,8 @@ namespace Cake {
 
 	internal class CakeException : Exception
 	{
-		public CakeException(string message) : base(message)
+		public CakeException(string message)
+			: base(message)
 		{
 		}
 	}
